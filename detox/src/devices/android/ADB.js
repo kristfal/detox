@@ -1,7 +1,7 @@
 const _ = require('lodash');
 const path = require('path');
 const {execWithRetriesAndLogs, spawnAndLog} = require('../../utils/exec');
-const pipeCommands = require('../../utils/pipeCommands');
+const {escape} = require('../../utils/pipeCommands');
 const EmulatorTelnet = require('./EmulatorTelnet');
 const Environment = require('../../utils/environment');
 
@@ -12,7 +12,7 @@ class ADB {
 
   async devices() {
     const output = (await this.adbCmd('', 'devices')).stdout;
-    return await this.parseAdbDevicesConsoleOutput(output);
+    return this.parseAdbDevicesConsoleOutput(output);
   }
 
   async unlockScreen(deviceId) {
@@ -31,8 +31,7 @@ class ADB {
   }
 
   async _getPowerStatus(deviceId) {
-    const grep = pipeCommands.search.regexp;
-    const stdout = await this.shell(deviceId, `dumpsys power | ${grep('^[ ]*m[UW].*=')}`);
+    const stdout = await this.shell(deviceId, `dumpsys power | grep "^[ ]*m[UW].*="`);
 
     return stdout
       .split('\n')
@@ -89,7 +88,7 @@ class ADB {
   }
 
   async now(deviceId) {
-    return this.shell(deviceId, `date "+\\"%Y-%m-%d %T.000\\""`);
+    return this.shell(deviceId, `date +"%Y-%m-%d %T.000"`);
   }
 
   async install(deviceId, apkPath) {
@@ -110,19 +109,14 @@ class ADB {
   }
 
   async pidof(deviceId, bundleId) {
-    const bundleIdRegex = pipeCommands.escape.inQuotedRegexp(bundleId) + '[ ]*$';
-    const grep = pipeCommands.search.regexp;
+    const bundleIdRegex = escape.inQuotedRegexp(bundleId) + '$';
 
-    const processes = await this.shell(deviceId, `ps | ${grep(bundleIdRegex)}`).catch(() => '');
+    const processes = await this.shell(deviceId, `ps | grep "${bundleIdRegex}"`).catch(() => '');
     if (!processes) {
       return NaN;
     }
 
     return parseInt(processes.split(' ').filter(Boolean)[1], 10);
-  }
-
-  async shell(deviceId, cmd, options) {
-    return (await this.adbCmd(deviceId, `shell ${cmd}`, options)).stdout.trim();
   }
 
   async getFileSize(deviceId, filename) {
@@ -136,7 +130,7 @@ class ADB {
   }
 
   async isFileOpen(deviceId, filename) {
-    const openedByProcesses = await this.shell(deviceId, 'lsof ' + filename);
+    const openedByProcesses = await this.shell(deviceId, `lsof | grep -e "${escape.inQuotedString(filename)}" || true`);
     return openedByProcesses.length > 0;
   }
 
@@ -155,7 +149,7 @@ class ADB {
   }
 
   async screencap(deviceId, path) {
-    return this.adbCmd(deviceId, `shell screencap ${path}`);
+    await this.shell(deviceId, `screencap ${path}`);
   }
 
   /***
@@ -211,11 +205,34 @@ class ADB {
   }
 
   async pull(deviceId, src, dst = '') {
-    return this.adbCmd(deviceId, `pull "${src}" "${dst}"`);
+    await this.adbCmd(deviceId, `pull "${src}" "${dst}"`);
   }
 
   async rm(deviceId, path, force = false) {
-    return this.adbCmd(deviceId, `shell rm ${force ? '-f' : ''} "${path}"`);
+    await this.shell(deviceId, `rm ${force ? '-f' : ''} "${path}"`);
+  }
+
+  async listInstrumentation(deviceId) {
+    return this.shell(deviceId, 'pm list instrumentation');
+  }
+
+  async getInstrumentationRunner(deviceId, bundleId) {
+    const instrumentationRunners = await this.listInstrumentation(deviceId);
+    const instrumentationRunner = this._instrumentationRunnerForBundleId(instrumentationRunners, bundleId);
+    if (instrumentationRunner === 'undefined') {
+      throw new Error(`No instrumentation runner found on device ${deviceId} for package ${bundleId}`);
+    }
+
+    return instrumentationRunner;
+  }
+
+  _instrumentationRunnerForBundleId(instrumentationRunners, bundleId) {
+    const runnerForBundleRegEx = new RegExp(`^instrumentation:(.*) \\(target=${bundleId.replace(new RegExp('\\.', 'g'), "\\.")}\\)$`, 'gm');
+    return _.get(runnerForBundleRegEx.exec(instrumentationRunners), [1], 'undefined');
+  }
+
+  async shell(deviceId, cmd, options) {
+    return (await this.adbCmd(deviceId, `shell "${escape.inQuotedString(cmd)}"`, options)).stdout.trim();
   }
 
   async adbCmd(deviceId, params, options) {
@@ -224,7 +241,7 @@ class ADB {
     const retries = _.get(options, 'retries', 1);
     _.unset(options, 'retries');
 
-    return await execWithRetriesAndLogs(cmd, options, undefined, retries);
+    return execWithRetriesAndLogs(cmd, options, undefined, retries);
   }
 
   /***
@@ -233,25 +250,6 @@ class ADB {
   spawn(deviceId, params) {
     const serial = deviceId ? ['-s', deviceId] : [];
     return spawnAndLog(this.adbBin, [...serial, ...params]);
-  }
-
-  async listInstrumentation(deviceId) {
-    return await this.shell(deviceId, 'pm list instrumentation');
-  }
-
-  instrumentationRunnerForBundleId(instrumentationRunners, bundleId) {
-    const runnerForBundleRegEx = new RegExp(`^instrumentation:(.*) \\(target=${bundleId.replace(new RegExp('\\.', 'g'), "\\.")}\\)$`, 'gm');
-    return _.get(runnerForBundleRegEx.exec(instrumentationRunners), [1], 'undefined');
-  }
-
-  async getInstrumentationRunner(deviceId, bundleId) {
-    const instrumentationRunners = await this.listInstrumentation(deviceId);
-    const instrumentationRunner = this.instrumentationRunnerForBundleId(instrumentationRunners, bundleId);
-    if (instrumentationRunner === 'undefined') {
-      throw new Error(`No instrumentation runner found on device ${deviceId} for package ${bundleId}`);
-    }
-
-    return instrumentationRunner;
   }
 }
 
