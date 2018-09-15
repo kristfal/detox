@@ -120,13 +120,13 @@ class ADB {
   }
 
   async getFileSize(deviceId, filename) {
-    const { stdout, stderr } = await this.adbCmd(deviceId, 'shell wc -c ' + filename).catch(e => e);
+    const { stdout, stderr } = await this.adbCmd(deviceId, 'shell du -h ' + filename).catch(e => e);
 
     if (stderr.includes('No such file or directory')) {
       return -1;
     }
 
-    return Number(stdout.slice(0, stdout.indexOf(' ')));
+    return Number(stdout.slice(0, stdout.indexOf(' ') - 1));
   }
 
   async isFileOpen(deviceId, filename) {
