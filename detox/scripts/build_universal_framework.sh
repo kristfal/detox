@@ -60,5 +60,5 @@ remove_arch "${BUILD_SIM}/${PROJECT_NAME}.framework/Frameworks/${SUB_FRAMEWORK}"
 fi
 done
 
-mv "${TEMP_DIR}/${PROJECT_NAME}.framework" "${OUTPUT_DIR}"/
+mv -f "${TEMP_DIR}/${PROJECT_NAME}.framework" "${OUTPUT_DIR}"/
 rm -fr "${TEMP_DIR}"
